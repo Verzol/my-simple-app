@@ -1,131 +1,102 @@
 name: CI/CD Pipeline
 
-# 1. KÍCH HOẠT (TRIGGER)
-# Workflow này sẽ tự động chạy khi nào?
 on:
   push:
-    branches: [ "main" ] # -> Khi có code được push lên nhánh "main"
+    branches: [ "main" ]
 
-# Biến môi trường dùng chung cho tiện
 env:
-  REGISTRY: ghcr.io # Dùng kho chứa image của GitHub
-  # github.repository sẽ tự lấy tên repo dạng "username/ten-repo"
-  # Ví dụ: dem-user/my-simple-app
-  IMAGE_NAME: ${{ github.repository }} 
+  # Bỏ IMAGE_NAME ra khỏi đây
+  REGISTRY: ghcr.io
 
-# NƠI ĐỊNH NGHĨA CÁC CÔNG VIỆC (JOBS)
 jobs:
-  # 2. JOB 1: BUILD VÀ PUSH IMAGE (Phần CI)
   build-and-push:
     name: Build and Push Docker Image
-    runs-on: ubuntu-latest # Chạy trên một máy ảo Ubuntu
-    
-    # Cấp quyền đặc biệt cho Job này
+    runs-on: ubuntu-latest
     permissions:
-      contents: read     # Quyền đọc code (để checkout)
-      packages: write    # Quyền ghi (push) image lên GHCR
-
-    # Định nghĩa "đầu ra" (output) của job này
-    # Để job sau (update-manifest) có thể lấy dùng
+      contents: read
+      packages: write
+    
+    # --- THAY ĐỔI 1: Thêm output mới ---
     outputs:
-      # Chúng ta sẽ tạo một output tên là 'image_tag'
       image_tag: ${{ steps.meta.outputs.version }}
+      # Output này sẽ chứa tên image (đã viết thường)
+      image_name_lower: ${{ steps.set-names.outputs.lower }}
 
-    steps: # Các bước thực thi của Job 1
-      # Bước 1: Lấy code từ repo 'my-simple-app' về máy ảo
+    steps:
       - name: Checkout code (Repo App)
         uses: actions/checkout@v4
 
-      # Bước 2: Đăng nhập vào kho chứa image (GHCR)
+      # --- THAY ĐỔI 2: Thêm bước này ---
+      - name: Set lower-case image name
+        # Gán ID 'set-names' cho bước này
+        id: set-names
+        run: |
+          # Dùng 'tr' của bash để đổi "Verzol/my-simple-app"
+          # thành "verzol/my-simple-app"
+          LOWER_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          
+          # Lưu vào GITHUB_ENV để các bước sau trong job này dùng
+          echo "IMAGE_NAME_LOWER=$LOWER_NAME" >> $GITHUB_ENV
+          
+          # Lưu vào GITHUB_OUTPUT để các job khác (như 'update-manifest') dùng
+          echo "lower=$LOWER_NAME" >> $GITHUB_OUTPUT
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }} # Tên user GitHub của bạn
-          # GITHUB_TOKEN là token tự động, chỉ có quyền push image
-          # Nó khác hoàn toàn với GIT_PAT của chúng ta
-          password: ${{ secrets.GITHUB_TOKEN }} 
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Bước 3: (Thông minh) Tự động tạo tên tag cho image
       - name: Extract metadata (tags) for Docker
-        id: meta # Đặt ID cho bước này để gọi ở dưới
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # --- THAY ĐỔI 3: Dùng biến mới ---
+          # Dùng 'IMAGE_NAME_LOWER' từ GITHUB_ENV
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}
           tags: |
-            # Chúng ta dùng 7 ký tự đầu của mã SHA commit làm tag
-            # Ví dụ: a1b2c3d
             type=sha,prefix=,format=short
 
-      # Bước 4: Build (từ Dockerfile) và Push image
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: . # Lấy Dockerfile ở thư mục gốc
-          push: true # Có, hãy push image
-          # Lấy tag đã tạo ở bước 'meta' (ví dụ: a1b2c3d)
-          tags: ${{ steps.meta.outputs.tags }} 
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # 3. JOB 2: CẬP NHẬT FILE MANIFEST (Trigger cho CD)
+  # --- KHÔNG THAY ĐỔI GÌ TRONG JOB 2 ---
   update-manifest:
     name: Update Kubernetes Manifest
     runs-on: ubuntu-latest
-    
-    # CHÚ Ý: Job này phải CHỜ job 'build-and-push' chạy xong
     needs: build-and-push
 
-    steps: # Các bước thực thi của Job 2
-      # Bước 1: Lấy code từ repo 'my-app-manifests'
+    steps:
       - name: Checkout code (Repo Manifest)
         uses: actions/checkout@v4
         with:
-          # Chỉ định rõ là checkout repo NÀO
           repository: Verzol/my-app-manifests
-          # DÙNG CHÌA KHÓA: Đây là lúc dùng 'két sắt'
-          # Token này sẽ cho phép bước 'git push' ở dưới
           token: ${{ secrets.GIT_PAT }} 
 
-      # Bước 2: Lấy tên tag (output) từ Job 1
-      - name: Get new image tag
+      # --- THAY ĐỔI 4: Lấy thêm output mới ---
+      - name: Get new image tag and name
         run: |
-          # Lấy output 'image_tag' từ job 'needs' (build-and-push)
-          # Và gán nó vào một biến môi trường tên là NEW_TAG
           echo "NEW_TAG=${{ needs.build-and-push.outputs.image_tag }}" >> $GITHUB_ENV
+          # Lấy output 'image_name_lower' từ job 'build-and-push'
+          echo "IMAGE_NAME_LOWER=${{ needs.build-and-push.outputs.image_name_lower }}" >> $GITHUB_ENV
 
-      # Bước 3: "MA THUẬT" - Tìm và thay thế
+      # --- THAY ĐỔI 5: Dùng biến mới trong 'sed' ---
       - name: Update image tag in deployment.yaml
         run: |
-          # sed: Là một công cụ tìm và thay thế text
-          # -i: Sửa trực tiếp file 'deployment.yaml'
-          # s|image: .*|...|g:
-          #   s: Bắt đầu lệnh thay thế
-          #   |: Ký tự phân cách (thay vì dùng /)
-          #   image: .*: Tìm dòng nào bắt đầu bằng 'image: ' và theo sau là BẤT CỨ KÝ TỰ GÌ (.*)
-          #   |: Phân cách
-          #   image: ...:${{ env.NEW_TAG }}: Thay thế toàn bộ dòng đó bằng chuỗi này
-          #   |: Phân cách
-          #   g: Thay thế trên toàn bộ file
-          sed -i "s|image: .*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}|g" deployment.yaml
-          
-          # In ra để kiểm tra xem đã sửa đúng chưa
-          echo "--- Nội dung deployment.yaml MỚI ---"
+          # Dùng 'IMAGE_NAME_LOWER' từ GITHUB_ENV
+          sed -i "s|image: .*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:${{ env.NEW_TAG }}|g" deployment.yaml
           cat deployment.yaml
-          echo "-----------------------------------"
 
-      # Bước 4: Commit và Push file 'deployment.yaml' đã sửa
       - name: Commit and push changes
         run: |
-          # Cấu hình Git để nó biết "ai" đang commit
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "bot@github.com"
-          
-          # Add file đã sửa
           git add deployment.yaml
-          
-          # Tạo commit
-          # '|| echo ...' là để tránh báo lỗi nếu không có gì thay đổi
-          git commit -m "Update image to ${{ env.NEW_TAB }}" || echo "No changes to commit"
-          
-          # Đẩy commit mới này về repo 'my-app-manifests'
+          git commit -m "Update image to ${{ env.NEW_TAG }}" || echo "No changes to commit"
           git push
