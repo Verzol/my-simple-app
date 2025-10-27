@@ -3,7 +3,7 @@ from flask import Flask
 
 @app.route("/")
 def hello():
-    return "Hello. This is version 1.0.0"
+    return "Hello. This is version 2.0.0"
 
 
 if __name__ == "__main__":
