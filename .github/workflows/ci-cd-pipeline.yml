@@ -11,7 +11,7 @@ env:
   REGISTRY: ghcr.io # Dùng kho chứa image của GitHub
   # github.repository sẽ tự lấy tên repo dạng "username/ten-repo"
   # Ví dụ: dem-user/my-simple-app
-  IMAGE_NAME: ${{ toLowerCase(github.repository) }} 
+  IMAGE_NAME: ${{ toLower(github.repository) }} 
 
 # NƠI ĐỊNH NGHĨA CÁC CÔNG VIỆC (JOBS)
 jobs:
